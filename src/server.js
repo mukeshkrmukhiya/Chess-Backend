@@ -13,7 +13,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
   cors: {
-    origin: 'http://localhost:3000',
+    origin: process.env.CLIENTURL || 'http://localhost:3000',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   }
 });
@@ -44,6 +44,7 @@ io.on('connection', (socket) => {
     }
 
     io.to(gameCode).emit('gameState', {
+
       players: games[gameCode].players,
       currentTurn: games[gameCode].currentTurn
     });
