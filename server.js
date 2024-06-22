@@ -31,6 +31,7 @@ app.use('/api/players', playerRoutes);
 io.on('connection', (socket) => {
   console.log('A user connected', socket.id);
 
+
   socket.on('joinRoom', ({ gameCode, playerId, username }) => {
     socket.join(gameCode);
     if (!games[gameCode]) {
@@ -48,6 +49,25 @@ io.on('connection', (socket) => {
     });
   });
 
+
+  socket.on('leaveGame', async ({ gameCode, playerId }) => {
+    console.log(`Player ${playerId} is leaving game ${gameCode}`);
+    
+    if (games[gameCode]) {
+      // Notify other players
+      socket.to(gameCode).emit('playerLeft', { playerId });
+      
+      // Update the game state for remaining players
+      io.to(gameCode).emit('gameState', {
+        players: games[gameCode].players,
+        currentTurn: games[gameCode].currentTurn
+      });
+    }
+    
+    // Leave the socket room
+    socket.leave(gameCode);
+  });
+  
   socket.on('makeMove', ({ gameCode, move, playerId }) => {
     const game = games[gameCode];
     if (!game) return;
