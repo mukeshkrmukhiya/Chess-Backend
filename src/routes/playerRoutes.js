@@ -1,5 +1,5 @@
 const express = require('express');
-const { registerPlayer, loginPlayer, getPlayerProfile, updatePoints  } = require('../controllers/authController');
+const { registerPlayer, loginPlayer, getPlayerProfile, updatePoints  } = require('../controllers/authcontroller');
 const authMiddleware = require('../middleware/authMiddleware');
 
 const router = express.Router();
