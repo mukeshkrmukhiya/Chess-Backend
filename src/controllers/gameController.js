@@ -56,14 +56,14 @@ exports.joinGame = async (req, res) => {
             return res.status(404).json({ message: 'Game or player not found' });
         }
 
-        if (game.playerBlack && game.playerWhite) {
+        if (game.playerWhite) {
             // Both players are already in the game, this player is rejoining
             const whitePlayer = await Player.findById(game.playerWhite);
-            const blackPlayer = await Player.findById(game.playerBlack);
             return res.status(200).json({
                 game,
                 whitePlayer: whitePlayer.username,
-                blackPlayer: blackPlayer.username,
+                blackPlayer: player.username,
+                whitePlayerId: whitePlayer._id,
             });
         } else if (!game.playerBlack) {
             game.playerBlack = player._id;
@@ -75,11 +75,13 @@ exports.joinGame = async (req, res) => {
                 game,
                 whitePlayer: whitePlayer.username,
                 blackPlayer: player.username,
+                whitePlayerId: whitePlayer._id
             });
 
         } else {
             return res.status(400).json({ message: 'Game is already full' });
         }
+
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Failed to join game' });
@@ -112,4 +114,5 @@ exports.getGameInfo = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
 

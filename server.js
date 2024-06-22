@@ -1,4 +1,4 @@
-// server.js
+//server.js
 
 const express = require('express');
 const cors = require('cors');
@@ -18,65 +18,59 @@ const io = socketIO(server, {
   }
 });
 
-const games = {}; // Object to store all active games
-
+const games = {};
 const port = process.env.PORT || 5000;
 
-// Connect to the database
 connectDB();
 
-// Middleware
 app.use(cors());
 app.use(express.json());
-
-// Routes
 app.use('/api/games', gameRoutes);
 app.use('/api/players', playerRoutes);
 
-// Socket.IO connection
 io.on('connection', (socket) => {
   console.log('A user connected', socket.id);
 
   socket.on('joinRoom', ({ gameCode, playerId, username }) => {
     socket.join(gameCode);
-
     if (!games[gameCode]) {
       games[gameCode] = {
-        players: [{ id: playerId, username }],
-        white: playerId,
-        black: null,
+        players: [{ id: playerId, username, color: 'white' }],
         currentTurn: 'white'
       };
-      socket.emit('playerColor', { color: 'white' });
     } else if (games[gameCode].players.length === 1) {
-      games[gameCode].players.push({ id: playerId, username });
-      games[gameCode].black = playerId;
-      socket.emit('playerColor', { color: 'black' });
-
-      // Emit game start event with player colors and usernames
-      io.to(gameCode).emit('gameStart', {
-        white: games[gameCode].players[0],
-        black: games[gameCode].players[1],
-        currentTurn: games[gameCode].currentTurn
-      });
+      games[gameCode].players.push({ id: playerId, username, color: 'black' });
     }
 
-    // Notify other players in the room about the new player
-    socket.to(gameCode).emit('opponentJoined', { opponentUsername: username });
+    io.to(gameCode).emit('gameState', {
+      players: games[gameCode].players,
+      currentTurn: games[gameCode].currentTurn
+    });
   });
-  
+
   socket.on('makeMove', ({ gameCode, move, playerId }) => {
-    console.log('make move', move, playerId);
+    const game = games[gameCode];
+    if (!game) return;
+
+    const player = game.players.find(p => p.id === playerId);
+    if (!player || player.color !== game.currentTurn) {
+      socket.emit('invalidMove', { message: "It's not your turn" });
+      return;
+    }
+
+    game.currentTurn = game.currentTurn === 'white' ? 'black' : 'white';
+    io.to(gameCode).emit('moveMade', { move, playerId, currentTurn: game.currentTurn });
     
-    // Update the current turn
-    games[gameCode].currentTurn = games[gameCode].currentTurn === 'white' ? 'black' : 'white';
-    
-    // Broadcast the move and the new turn to all players in the room
-    io.to(gameCode).emit('moveMade', { move, playerId, currentTurn: games[gameCode].currentTurn });
+    // Emit updated game state after move
+    io.to(gameCode).emit('gameState', {
+      players: game.players,
+      currentTurn: game.currentTurn
+    });
   });
 
   socket.on('disconnect', () => {
     console.log('A user disconnected');
+    // Handle disconnection (e.g., notify other player, end game, etc.)
   });
 });
 
