@@ -13,7 +13,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
   cors: {
-    origin:  process.env.CLIENTURL || `https://mukhiyachessapp.netlify.app/`,
+    origin: 'http://localhost:3000',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   }
 });
@@ -100,7 +100,6 @@ server.listen(port, () => {
 });
 
 module.exports = { io };
-
 
 
   // socket.on('createGame', async ({ playerId, timeControl }) => {

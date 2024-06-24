@@ -30,7 +30,7 @@ exports.createGame = async (req, res) => {
       res.status(201).json({ 
           message: 'Game created successfully', 
           gameCode: savedGame.gameCode,
-          username: player.username
+          username: player.username,
       });
 
       console.log('Game created with Game Code:', savedGame.gameCode);
