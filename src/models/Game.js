@@ -19,10 +19,15 @@ const gameSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
+  // status: {
+  //   type: String,
+  //   enum: ['ongoing', 'finished'],
+  //   default: 'ongoing'
+  // },
   status: {
     type: String,
-    enum: ['ongoing', 'finished'],
-    default: 'ongoing'
+    enum: ['open', 'active', 'finished'],
+    default: 'open'
   },
   createdAt: {
     type: Date,

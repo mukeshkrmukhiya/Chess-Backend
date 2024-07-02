@@ -88,7 +88,65 @@ exports.joinGame = async (req, res) => {
     }
 };
 
+exports.randomJoin = async (req, res) => {
+  const { playerId, timeControl } = req.body;
+  
+  try {
+    // Fetch the player information
+    const player = await Player.findById(playerId);
+    if (!player) {
+      return res.status(404).json({ message: 'Player not found' });
+    }
 
+    // Find an available game or create a new one
+    let game = await Game.findOne({ 
+      timeControl, 
+      status: 'open', 
+      playerBlack: { $exists: false } 
+    });
+
+    if (game) {
+      // Join existing game
+      game.playerBlack = playerId;
+      game.status = 'active';
+      await game.save();
+
+      res.json({ 
+        gameCode: game.gameCode, 
+        username: player.username, 
+        color: 'black'
+      });
+    } else {
+      // Create new game
+      const gameCode = uniqid();
+      game = new Game({
+        gameCode,
+        playerWhite: playerId,
+        timeControl,
+        status: 'open'
+      });
+      await game.save();
+
+      res.json({ 
+        gameCode, 
+        username: player.username, 
+        color: 'white'
+      });
+    }
+
+    // Emit socket event to notify about the game creation or join
+    if (req.io) {
+      req.io.to(game.gameCode).emit('gameUpdate', {
+        gameCode: game.gameCode,
+        status: game.status
+      });
+    }
+
+  } catch (error) {
+    console.error('Error in random match:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
 
 exports.getGameInfo = async (req, res) => {
   try {
