@@ -70,13 +70,32 @@ io.on('connection', (socket) => {
       return;
     }
     game.currentTurn = game.currentTurn === 'white' ? 'black' : 'white';
-    io.to(gameCode).emit('moveMade', { move, playerId, currentTurn: game.currentTurn });
     
+    // Emit the move to all players in the room, including the castling information
+    io.to(gameCode).emit('moveMade', { move, playerId, currentTurn: game.currentTurn });
+
     io.to(gameCode).emit('gameState', {
       players: game.players,
       currentTurn: game.currentTurn
     });
   });
+
+  // socket.on('makeMove', ({ gameCode, move, playerId }) => {
+  //   const game = games[gameCode];
+  //   if (!game) return;
+  //   const player = game.players.find(p => p.id === playerId);
+  //   if (!player || player.color !== game.currentTurn) {
+  //     socket.emit('invalidMove', { message: "It's not your turn" });
+  //     return;
+  //   }
+  //   game.currentTurn = game.currentTurn === 'white' ? 'black' : 'white';
+  //   io.to(gameCode).emit('moveMade', { move, playerId, currentTurn: game.currentTurn });
+    
+  //   io.to(gameCode).emit('gameState', {
+  //     players: game.players,
+  //     currentTurn: game.currentTurn
+  //   });
+  // });
 
   socket.on('requestRematch', ({ gameCode, playerId }) => {
     socket.to(gameCode).emit('rematchRequested', { requestingPlayerId: playerId });
