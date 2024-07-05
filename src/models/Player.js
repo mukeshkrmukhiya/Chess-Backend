@@ -1,7 +1,9 @@
+
+
+
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
-// Define the schema
 const playerSchema = new mongoose.Schema({
     username: {
         type: String,
@@ -21,13 +23,37 @@ const playerSchema = new mongoose.Schema({
         required: true,
         minlength: 6
     },
+    profilePicture: {
+        type: String,
+        default: 'default-profile-picture.jpg'
+    },
     points: {
         type: Number,
         default: 0
     },
     games: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Game'
+        gameId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Game'
+        },
+        opponent: {
+            type: String,
+            // required: true
+        },
+        outcome: {
+            type: String,
+            enum: ['win', 'lose', 'draw'],
+            required: true
+        },
+        color: {
+            type: String,
+            enum: ['white', 'black'],
+            required: true
+        },
+        date: {
+            type: Date,
+            default: Date.now
+        }
     }],
     createdAt: {
         type: Date,
@@ -49,7 +75,5 @@ playerSchema.methods.matchPassword = async function(enteredPassword) {
     return await bcrypt.compare(enteredPassword, this.password);
 };
 
-// Create the model
 const Player = mongoose.model('Player', playerSchema);
-
 module.exports = Player;

@@ -13,17 +13,14 @@ const gameSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Player'
   },
+  
   moves: [{ type: String }],
   gameCode: {
     type: String,
     required: true,
     unique: true
   },
-  // status: {
-  //   type: String,
-  //   enum: ['ongoing', 'finished'],
-  //   default: 'ongoing'
-  // },
+  
   status: {
     type: String,
     enum: ['open', 'active', 'finished'],

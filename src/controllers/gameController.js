@@ -1,3 +1,5 @@
+//gamecontroller.js
+
 const Game = require('../models/Game');
 const Player = require('../models/Player');
 const mongoose = require('mongoose');
@@ -174,3 +176,142 @@ exports.getGameInfo = async (req, res) => {
 };
 
 
+
+exports.endGame = async (req, res) => {
+  try {
+      const { gameCode, winner } = req.body;
+      const game = await Game.findOne({ gameCode });
+
+      if (!game) {
+          return res.status(404).json({ message: 'Game not found' });
+      }
+
+      game.status = 'finished';
+      game.winner = winner;
+      await game.save();
+
+      // Fetch player usernames
+      const [playerWhite, playerBlack] = await Promise.all([
+          Player.findById(game.playerWhite),
+          Player.findById(game.playerBlack)
+      ]);
+
+      if (!playerWhite || !playerBlack) {
+          throw new Error('One or both players not found');
+      }
+
+      // Update players' game history
+      await updatePlayerGameHistory(
+          playerWhite._id,
+          game._id,
+          winner === 'white' ? 'win' : winner === 'black' ? 'lose' : 'draw',
+          'white',
+          playerBlack.username
+      );
+
+      await updatePlayerGameHistory(
+          playerBlack._id,
+          game._id,
+          winner === 'black' ? 'win' : winner === 'white' ? 'lose' : 'draw',
+          'black',
+          playerWhite.username
+      );
+
+      res.status(200).json({ message: 'Game ended successfully' });
+  } catch (err) {
+      console.error('Error in endGame:', err);
+      res.status(500).json({ message: 'Failed to end game', error: err.message });
+  }
+};
+
+async function updatePlayerGameHistory(playerId, gameId, outcome, color, opponentUsername) {
+  try {
+      const player = await Player.findById(playerId);
+      if (!player) {
+          throw new Error('Player not found');
+      }
+
+      // Ensure opponentUsername is provided
+      if (!opponentUsername) {
+          throw new Error('Opponent username is required');
+      }
+
+      player.games.push({
+          gameId,
+          opponent: opponentUsername,
+          outcome,
+          color
+      });
+
+      // Update points
+      if (outcome === 'win') {
+          player.points += 10;
+      } else if (outcome === 'draw') {
+          player.points += 1;
+      }else if (outcome === 'lose' && player.points >= 8 ) {
+        player.points -= 8;
+
+      };
+
+      await player.save();
+  } catch (error) {
+      console.error('Error updating player game history:', error);
+      throw error; // Re-throw the error to be handled by the caller
+  }
+}
+
+
+
+
+
+// exports.endGame = async (req, res) => {
+//   try {
+//       const { gameCode, winner } = req.body;
+
+//       const game = await Game.findOne({ gameCode });
+//       if (!game) {
+//           return res.status(404).json({ message: 'Game not found' });
+//       }
+
+//       game.status = 'finished';
+//       game.winner = winner;
+//       await game.save();
+
+//       // Update players' game history
+//       await updatePlayerGameHistory(game.playerWhite, game._id, winner === 'white' ? 'win' : winner === 'black' ? 'lose' : 'draw', 'white');
+//       await updatePlayerGameHistory(game.playerBlack, game._id, winner === 'black' ? 'win' : winner === 'white' ? 'lose' : 'draw', 'black');
+
+//       res.status(200).json({ message: 'Game ended successfully' });
+//   } catch (err) {
+//       console.error(err);
+//       res.status(500).json({ message: 'Failed to end game' });
+//   }
+// };
+
+// async function updatePlayerGameHistory(playerId, gameId, outcome, color) {
+//   try {
+//       const player = await Player.findById(playerId);
+//       if (!player) {
+//           throw new Error('Player not found');
+//       }
+
+//       player.games.push({
+//           gameId,
+//           outcome,
+//           color
+//       });
+
+//       // Update points
+//       if (outcome === 'win') {
+//           player.points += 3;
+//       } else if (outcome === 'draw') {
+//           player.points += 1;
+//       }
+
+//       await player.save();
+//   } catch (error) {
+//       console.error('Error updating player game history:', error);
+//   }
+// }
+
+// module.exports = exports;

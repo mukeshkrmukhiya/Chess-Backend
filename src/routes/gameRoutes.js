@@ -1,5 +1,5 @@
 const express = require('express');
-const { createGame, joinGame, getGameInfo, randomJoin } = require('../controllers/gameController');
+const { createGame, joinGame, getGameInfo, randomJoin, endGame } = require('../controllers/gameController');
 
 const router = express.Router();
 
@@ -7,6 +7,7 @@ router.post('/create', createGame);
 router.post('/join', joinGame);
 router.get('/:gameCode', getGameInfo);
 router.post('/random-match', randomJoin);
+router.post('/end-game', endGame);
 
 module.exports = router;
 
