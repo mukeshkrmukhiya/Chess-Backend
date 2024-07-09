@@ -20,13 +20,17 @@ exports.registerPlayer = async (req, res) => {
 
         // Create new player
         const player = new Player({ username, email, password });
+
+        // Assign 700 points to the player
+        player.points = 700;
+
         await player.save();
 
-        // Generate token
-        const token = jwt.sign({ id: player._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        // Generate token with expiration of 7 days
+        const token = jwt.sign({ id: player._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
-        // Respond with the token
-        res.status(201).json({ token, message: 'Registration successful' });
+        // Respond with the token and success message
+        res.status(201).json({ token, message: 'Registration successful', points: player.points });
     } catch (err) {
         // Handle mongoose validation errors
         if (err.name === 'ValidationError') {
@@ -37,6 +41,41 @@ exports.registerPlayer = async (req, res) => {
         res.status(500).json({ message: 'Server Error' });
     }
 };
+
+// exports.registerPlayer = async (req, res) => {
+//     const { username, email, password } = req.body;
+
+//     // Check if all fields are present
+//     if (!username || !email || !password) {
+//         return res.status(400).json({ message: 'Please fill all fields' });
+//     }
+
+//     try {
+//         // Check if player already exists
+//         const playerExists = await Player.findOne({ email });
+//         if (playerExists) {
+//             return res.status(400).json({ message: 'Player already exists' });
+//         }
+
+//         // Create new player
+//         const player = new Player({ username, email, password });
+//         await player.save();
+
+//         // Generate token
+//         const token = jwt.sign({ id: player._id }, process.env.JWT_SECRET); //, { expiresIn: '1h' }
+
+//         // Respond with the token
+//         res.status(201).json({ token, message: 'Registration successful' });
+//     } catch (err) {
+//         // Handle mongoose validation errors
+//         if (err.name === 'ValidationError') {
+//             const messages = Object.values(err.errors).map(val => val.message);
+//             return res.status(400).json({ message: messages.join(', ') });
+//         }
+//         // Handle other errors
+//         res.status(500).json({ message: 'Server Error' });
+//     }
+// };
 
 exports.loginPlayer = async (req, res) => {
     const { email, password } = req.body;
