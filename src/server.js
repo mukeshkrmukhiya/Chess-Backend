@@ -186,6 +186,7 @@ const playerRoutes = require('./routes/playerRoutes');
 const http = require('http');
 const socketIO = require('socket.io');
 require('dotenv').config();
+const {handleDisconnect} = require('./controllers/gameController');
 
 const app = express();
 const server = http.createServer(app);
@@ -208,8 +209,29 @@ app.use('/api/players', playerRoutes);
 io.on('connection', (socket) => {
   console.log('A user connected', socket.id);
 
+  // socket.on('joinRoom', ({ gameCode, playerId, username }) => {
+  //   socket.join(gameCode);
+  //   if (!games[gameCode]) {
+  //     games[gameCode] = {
+  //       players: [{ id: playerId, username, color: 'white' }],
+  //       currentTurn: 'white'
+  //     };
+  //   } else if (games[gameCode].players.length === 1) {
+  //     const existingPlayer = games[gameCode].players[0];
+  //     const newPlayerColor = existingPlayer.color === 'white' ? 'black' : 'white';
+  //     games[gameCode].players.push({ id: playerId, username, color: newPlayerColor });
+  //   }
+  //   io.to(gameCode).emit('gameState', {
+  //     players: games[gameCode].players,
+  //     currentTurn: games[gameCode].currentTurn
+  //   });
+  // });
+
   socket.on('joinRoom', ({ gameCode, playerId, username }) => {
     socket.join(gameCode);
+    // Store player information in the socket object
+    socket.player = { id: playerId, username, gameCode };
+
     if (!games[gameCode]) {
       games[gameCode] = {
         players: [{ id: playerId, username, color: 'white' }],
@@ -285,11 +307,37 @@ io.on('connection', (socket) => {
     socket.to(gameCode).emit('rematchRejected');
   });
 
-  socket.on('disconnect', () => {
-    console.log('A user disconnected');
-    // Handle disconnection (e.g., notify other player, end game, etc.)
-  });
+//   socket.on('disconnect', () => {
+//     console.log('A user disconnected');
+//     // handleDisconnect(playerId);
+//     // Handle disconnection (e.g., notify other player, end game, etc.)
+//   });
+// });
+
+
+socket.on('disconnect', () => {
+  console.log('A user disconnected');
+  if (socket.player) {
+    const { id: playerId, gameCode } = socket.player;
+    handleDisconnect(playerId, gameCode);
+    // Notify other players in the game
+    socket.to(gameCode).emit('playerDisconnected', { playerId });
+    // Remove the player from the game
+    if (games[gameCode]) {
+      games[gameCode].players = games[gameCode].players.filter(p => p.id !== playerId);
+      if (games[gameCode].players.length === 0) {
+        delete games[gameCode];
+      } else {
+        io.to(gameCode).emit('gameState', {
+          players: games[gameCode].players,
+          currentTurn: games[gameCode].currentTurn
+        });
+      }
+    }
+  }
 });
+});
+
 
 server.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);

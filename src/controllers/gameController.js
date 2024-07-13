@@ -6,42 +6,180 @@ const mongoose = require('mongoose');
 const uniqid = require('uniqid');
 
 
+// exports.createGame = async (req, res) => {
+//   try {
+//       const { playerId, timeControl } = req.body;
+
+//       if (!mongoose.isValidObjectId(playerId)) {
+//           return res.status(400).json({ message: 'Invalid player ID' });
+//       }
+
+//       const player = await Player.findById(playerId);
+//       if (!player) {
+//           return res.status(404).json({ message: 'Player not found' });
+//       }
+
+//       const gameCode = uniqid();
+//       const newGame = new Game({
+//           gameCode, 
+//           playerWhite: player._id, 
+//           playerBlack: null, 
+//           timeControl: timeControl || 10
+//       });
+      
+//       const savedGame = await newGame.save();
+
+//       res.status(201).json({ 
+//           message: 'Game created successfully', 
+//           gameCode: savedGame.gameCode,
+//           username: player.username,
+//       });
+
+//       console.log('Game created with Game Code:', savedGame.gameCode);
+//   } catch (err) {
+//       console.error(err);
+//       res.status(500).json({ message: 'Failed to create game' });
+//   }
+// };
+
+
 exports.createGame = async (req, res) => {
   try {
-      const { playerId, timeControl } = req.body;
+    const { playerId, timeControl } = req.body;
 
-      if (!mongoose.isValidObjectId(playerId)) {
-          return res.status(400).json({ message: 'Invalid player ID' });
+    if (!mongoose.isValidObjectId(playerId)) {
+      return res.status(400).json({ message: 'Invalid player ID' });
+    }
+
+    const player = await Player.findById(playerId);
+    if (!player) {
+      return res.status(404).json({ message: 'Player not found' });
+    }
+
+    const gameCode = uniqid();
+    const newGame = new Game({
+      gameCode,
+      playerWhite: player._id,
+      playerBlack: null,
+      timeControl: timeControl || 10,
+      createdAt: new Date(),
+      status: 'created'
+    });
+
+    const savedGame = await newGame.save();
+
+    // Set a timeout to delete the game if no black player joins within 5 minutes
+    setTimeout(async () => {
+      const game = await Game.findOne({ gameCode });
+      if (game && game.status === 'created') {
+        await Game.deleteOne({ gameCode });
+        console.log(`Game ${gameCode} deleted due to no black player joining within 5 minutes`);
       }
+    }, 5 * 60 * 1000); // 5 minutes in milliseconds
 
-      const player = await Player.findById(playerId);
-      if (!player) {
-          return res.status(404).json({ message: 'Player not found' });
-      }
+    res.status(201).json({
+      message: 'Game created successfully',
+      gameCode: savedGame.gameCode,
+      username: player.username,
+    });
 
-      const gameCode = uniqid();
-      const newGame = new Game({
-          gameCode, 
-          playerWhite: player._id, 
-          playerBlack: null, 
-          timeControl: timeControl || 10
-      });
-      
-      const savedGame = await newGame.save();
-
-      res.status(201).json({ 
-          message: 'Game created successfully', 
-          gameCode: savedGame.gameCode,
-          username: player.username,
-      });
-
-      console.log('Game created with Game Code:', savedGame.gameCode);
+    console.log('Game created with Game Code:', savedGame.gameCode);
   } catch (err) {
-      console.error(err);
-      res.status(500).json({ message: 'Failed to create game' });
+    console.error(err);
+    res.status(500).json({ message: 'Failed to create game' });
   }
 };
 
+exports.randomJoin = async (req, res) => {
+  const { playerId, timeControl } = req.body;
+  
+  try {
+    // Fetch the player information
+    const player = await Player.findById(playerId);
+    if (!player) {
+      return res.status(404).json({ message: 'Player not found' });
+    }
+
+    // Find an available game or create a new one
+    let game = await Game.findOne({ 
+      timeControl, 
+      status: 'open', 
+      playerBlack: null,
+      createdAt: { $gte: new Date(Date.now() - 5 * 60 * 1000) } // Only consider games created within the last 5 minutes
+    });
+
+    if (game) {
+      // Join existing game
+      game.playerBlack = playerId;
+      game.status = 'active';
+      await game.save();
+
+      res.json({ 
+        gameCode: game.gameCode, 
+        username: player.username, 
+        color: 'black'
+      });
+    } else {
+      // Create new game
+      const gameCode = uniqid();
+      game = new Game({
+        gameCode,
+        playerWhite: playerId,
+        timeControl,
+        status: 'open',
+        createdAt: new Date()
+      });
+      await game.save();
+
+      // Set a timeout to delete the game if no black player joins within 5 minutes
+      setTimeout(async () => {
+        const updatedGame = await Game.findOne({ gameCode });
+        if (updatedGame && updatedGame.status === 'open') {
+          await Game.deleteOne({ gameCode });
+          console.log(`Game ${gameCode} deleted due to no black player joining within 5 minutes`);
+        }
+      }, 5 * 60 * 1000); // 5 minutes in milliseconds
+
+      res.json({ 
+        gameCode, 
+        username: player.username, 
+        color: 'white'
+      });
+    }
+
+    // Emit socket event to notify about the game creation or join
+    if (req.io) {
+      req.io.to(game.gameCode).emit('gameUpdate', {
+        gameCode: game.gameCode,
+        status: game.status
+      });
+    }
+
+  } catch (error) {
+    console.error('Error in random match:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Function to handle player disconnection
+exports.handleDisconnect = async (playerId, gameCode) => {
+  try {
+    const game = await Game.findOne({
+      $or: [
+        { playerWhite: playerId, playerBlack: null },
+        { playerBlack: playerId, playerWhite: null }
+      ],
+      // Only consider 'open' games as they're likely to have one player status: 'open'
+    });
+
+    if (game) {
+      await Game.deleteOne({ _id: game._id });
+      console.log(`Game ${game.gameCode} deleted due to sole player disconnection`);
+    }
+  } catch (err) {
+    console.error('Error handling disconnection:', err);
+  }
+};
 
 
 exports.joinGame = async (req, res) => {
@@ -90,65 +228,65 @@ exports.joinGame = async (req, res) => {
     }
 };
 
-exports.randomJoin = async (req, res) => {
-  const { playerId, timeControl } = req.body;
+// exports.randomJoin = async (req, res) => {
+//   const { playerId, timeControl } = req.body;
   
-  try {
-    // Fetch the player information
-    const player = await Player.findById(playerId);
-    if (!player) {
-      return res.status(404).json({ message: 'Player not found' });
-    }
+//   try {
+//     // Fetch the player information
+//     const player = await Player.findById(playerId);
+//     if (!player) {
+//       return res.status(404).json({ message: 'Player not found' });
+//     }
 
-    // Find an available game or create a new one
-    let game = await Game.findOne({ 
-      timeControl, 
-      status: 'open', 
-      playerBlack: { $exists: false } 
-    });
+//     // Find an available game or create a new one
+//     let game = await Game.findOne({ 
+//       timeControl, 
+//       status: 'open', 
+//       playerBlack: { $exists: false } 
+//     });
 
-    if (game) {
-      // Join existing game
-      game.playerBlack = playerId;
-      game.status = 'active';
-      await game.save();
+//     if (game) {
+//       // Join existing game
+//       game.playerBlack = playerId;
+//       game.status = 'active';
+//       await game.save();
 
-      res.json({ 
-        gameCode: game.gameCode, 
-        username: player.username, 
-        color: 'black'
-      });
-    } else {
-      // Create new game
-      const gameCode = uniqid();
-      game = new Game({
-        gameCode,
-        playerWhite: playerId,
-        timeControl,
-        status: 'open'
-      });
-      await game.save();
+//       res.json({ 
+//         gameCode: game.gameCode, 
+//         username: player.username, 
+//         color: 'black'
+//       });
+//     } else {
+//       // Create new game
+//       const gameCode = uniqid();
+//       game = new Game({
+//         gameCode,
+//         playerWhite: playerId,
+//         timeControl,
+//         status: 'open'
+//       });
+//       await game.save();
 
-      res.json({ 
-        gameCode, 
-        username: player.username, 
-        color: 'white'
-      });
-    }
+//       res.json({ 
+//         gameCode, 
+//         username: player.username, 
+//         color: 'white'
+//       });
+//     }
 
-    // Emit socket event to notify about the game creation or join
-    if (req.io) {
-      req.io.to(game.gameCode).emit('gameUpdate', {
-        gameCode: game.gameCode,
-        status: game.status
-      });
-    }
+//     // Emit socket event to notify about the game creation or join
+//     if (req.io) {
+//       req.io.to(game.gameCode).emit('gameUpdate', {
+//         gameCode: game.gameCode,
+//         status: game.status
+//       });
+//     }
 
-  } catch (error) {
-    console.error('Error in random match:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-};
+//   } catch (error) {
+//     console.error('Error in random match:', error);
+//     res.status(500).json({ message: 'Server error' });
+//   }
+// };
 
 exports.getGameInfo = async (req, res) => {
   try {
@@ -192,8 +330,8 @@ exports.endGame = async (req, res) => {
 
       // Fetch player usernames
       const [playerWhite, playerBlack] = await Promise.all([
-          Player.findById(game.playerWhite),
-          Player.findById(game.playerBlack)
+          Player.findOne(game.playerWhite),
+          Player.findOne(game.playerBlack)
       ]);
 
       if (!playerWhite || !playerBlack) {
