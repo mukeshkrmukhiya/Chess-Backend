@@ -1,78 +1,80 @@
-
-
-
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const playerSchema = new mongoose.Schema({
-    username: {
-        type: String,
-        required: true,
-        unique: true,
-        trim: true
+  username: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    index: true
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    lowercase: true,
+    index: true
+  },
+  password: {
+    type: String,
+    required: function() {
+      return !this.googleId;
     },
-    email: {
-        type: String,
-        required: true,
-        unique: true,
-        trim: true,
-        lowercase: true
+    minlength: 6
+  },
+  googleId: {
+    type: String,
+    index: true,
+    sparse: true
+  },
+  profilePicture: {
+    type: String,
+    default: 'default-profile-picture.jpg'
+  },
+  points: {
+    type: Number,
+    default: 0,
+    index: true
+  },
+  games: [{
+    gameId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Game'
     },
-    password: {
-        type: String,
-        required: true,
-        minlength: 6
+    opponent: {
+      type: String
     },
-    profilePicture: {
-        type: String,
-        default: 'default-profile-picture.jpg'
+    outcome: {
+      type: String,
+      enum: ['win', 'lose', 'draw'],
+      required: true
     },
-    points: {
-        type: Number,
-        default: 0
+    color: {
+      type: String,
+      enum: ['white', 'black'],
+      required: true
     },
-    games: [{
-        gameId: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'Game'
-        },
-        opponent: {
-            type: String,
-            // required: true
-        },
-        outcome: {
-            type: String,
-            enum: ['win', 'lose', 'draw'],
-            required: true
-        },
-        color: {
-            type: String,
-            enum: ['white', 'black'],
-            required: true
-        },
-        date: {
-            type: Date,
-            default: Date.now
-        }
-    }],
-    createdAt: {
-        type: Date,
-        default: Date.now
+    date: {
+      type: Date,
+      default: Date.now
     }
-});
+  }]
+}, { timestamps: true });
 
-// Hash the password before saving
+// Hashes changed passwords before persistence.
 playerSchema.pre('save', async function(next) {
-    if (this.isModified('password')) {
-        const salt = await bcrypt.genSalt(10);
-        this.password = await bcrypt.hash(this.password, salt);
-    }
-    next();
+  if (this.isModified('password') && this.password) {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+  }
+  next();
 });
 
-// Method to compare entered password with hashed password
+// Compares submitted password with stored hash.
 playerSchema.methods.matchPassword = async function(enteredPassword) {
-    return await bcrypt.compare(enteredPassword, this.password);
+  return bcrypt.compare(enteredPassword, this.password);
 };
 
 const Player = mongoose.model('Player', playerSchema);

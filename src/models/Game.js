@@ -1,44 +1,43 @@
-
-
-
 const mongoose = require('mongoose');
 
 const gameSchema = new mongoose.Schema({
   playerWhite: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Player',
-    required: true
+    required: true,
+    index: true
   },
   playerBlack: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Player'
+    ref: 'Player',
+    index: true
   },
-  
   moves: [{ type: String }],
   gameCode: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    index: true
   },
-  
   status: {
     type: String,
     enum: ['open', 'active', 'finished', 'created'],
-    default: 'open'
+    default: 'open',
+    index: true
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+  winner: {
+    type: String,
+    enum: ['white', 'black', 'draw', null],
+    default: null
   },
   timeControl: {
     type: Number,
-    required: true
+    required: true,
+    index: true
   }
-});
+}, { timestamps: true });
+
+gameSchema.index({ status: 1, timeControl: 1, createdAt: -1 });
 
 const Game = mongoose.model('Game', gameSchema);
 
