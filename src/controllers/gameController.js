@@ -114,6 +114,12 @@ exports.randomJoin = async (req, res) => {
   }
 };
 
+// In-memory grace period tracker. 
+// Key: playerId string, Value: { gameId, timer, roomId }
+const pendingDisconnects = new Map();
+
+
+
 // Removes abandoned one-player games after disconnect.
 exports.handleDisconnect = async (playerId) => {
   try {
@@ -124,7 +130,7 @@ exports.handleDisconnect = async (playerId) => {
       ],
       status: { $in: ['open', 'created'] }
     });
-
+ 
     if (game) {
       await Game.deleteOne({ _id: game._id });
       console.log(`Game ${game.gameCode} deleted due to sole player disconnection`);
@@ -133,6 +139,191 @@ exports.handleDisconnect = async (playerId) => {
     console.error('Error handling disconnection:', err);
   }
 };
+ 
+// Starts a 30s grace period for active 2-player games on disconnect.
+// Uses in-memory game object — no DB query needed.
+exports.handleActiveGameDisconnect = async (playerId, gameCode, inMemoryGame, socket, io) => {
+  try {
+    // Only applies when both players are present
+    if (!inMemoryGame || inMemoryGame.players.length < 2) return;
+ 
+    const playerIdStr = playerId.toString();
+    const disconnectedPlayer = inMemoryGame.players.find(p => p.id === playerIdStr);
+    if (!disconnectedPlayer) return;
+ 
+    const GRACE_PERIOD_MS = 30_000; // 30 seconds
+ 
+    console.log(`Player ${playerIdStr} disconnected from game ${gameCode}. Grace period started.`);
+ 
+    // Tell opponent to show countdown
+    io.to(gameCode).emit('opponent_disconnected', {
+      graceSeconds: GRACE_PERIOD_MS / 1000,
+      message: 'Your opponent disconnected. Waiting for reconnection...'
+    });
+ 
+    const timer = setTimeout(async () => {
+      try {
+        const winnerColor = disconnectedPlayer.color === 'white' ? 'black' : 'white';
+        const opponentPlayer = inMemoryGame.players.find(p => p.id !== playerIdStr);
+ 
+        // Update game status using correct schema field: winner (not result)
+        const finishedGame = await Game.findOneAndUpdate(
+          { gameCode },
+          { status: 'finished', winner: winnerColor },
+          { new: true }
+        );
+ 
+        if (finishedGame) {
+          const whiteId = finishedGame.playerWhite;
+          const blackId = finishedGame.playerBlack;
+          const winnerId = winnerColor === 'white' ? whiteId : blackId;
+          const loserId  = winnerColor === 'white' ? blackId : whiteId;
+ 
+          // Record win in winner's history + add points
+          await Player.findByIdAndUpdate(winnerId, {
+            $push: {
+              games: {
+                gameId:   finishedGame._id,
+                outcome:  'win',
+                color:    winnerColor,
+                opponent: disconnectedPlayer.username,
+                date:     new Date()
+              }
+            },
+            $inc: { points: 10 }
+          });
+ 
+          // Record loss in loser's history — deduct fewer points
+          await Player.findByIdAndUpdate(loserId, {
+            $push: {
+              games: {
+                gameId:   finishedGame._id,
+                outcome:  'lose',
+                color:    disconnectedPlayer.color,
+                opponent: opponentPlayer?.username || 'Unknown',
+                date:     new Date()
+              }
+            },
+            $inc: { points: -5 }
+          });
+        }
+ 
+        // Notify room — game is over
+        io.to(gameCode).emit('game_over', {
+          reason:      'disconnect_forfeit',
+          winnerColor,
+          message:     `${disconnectedPlayer.username} failed to reconnect. You win!`
+        });
+ 
+        pendingDisconnects.delete(playerIdStr);
+        console.log(`Player ${playerIdStr} forfeited game ${gameCode} — did not reconnect in time.`);
+      } catch (err) {
+        console.error('Error applying disconnect forfeit:', err);
+      }
+    }, GRACE_PERIOD_MS);
+ 
+    pendingDisconnects.set(playerIdStr, { gameCode, timer });
+  } catch (err) {
+    console.error('Error in handleActiveGameDisconnect:', err);
+  }
+};
+ 
+// Cancels grace period timer when player comes back in time.
+exports.handleReconnect = async (playerId, gameCode, socket, io) => {
+  const playerIdStr = playerId.toString();
+  const pending = pendingDisconnects.get(playerIdStr);
+
+  if (!pending) return false;
+
+  // Resume only the same game
+  if (pending.gameCode !== gameCode) {
+    return false;
+  }
+
+  clearTimeout(pending.timer);
+  pendingDisconnects.delete(playerIdStr);
+
+  socket.join(gameCode);
+
+  const game = await Game.findOne({ gameCode });
+
+  if (!game || game.status !== 'active') {
+    return false;
+  }
+
+  socket.to(gameCode).emit('opponent_reconnected', {
+    message: 'Your opponent has reconnected!'
+  });
+
+  socket.emit('game_resumed', { game });
+
+  console.log(`Player ${playerIdStr} reconnected to game ${gameCode}.`);
+
+  return true;
+};
+
+
+
+
+// exports.handleReconnect = async (playerId, socket, io) => {
+//   const playerIdStr = playerId.toString();
+//   const pending = pendingDisconnects.get(playerIdStr);
+ 
+//   if (!pending) return false; // Nothing pending — not a reconnect scenario
+ 
+//   const { gameCode, timer } = pending;
+ 
+//   clearTimeout(timer);
+//   pendingDisconnects.delete(playerIdStr);
+ 
+//   // Rejoin the socket room
+//   socket.join(gameCode);
+ 
+//   // Restore game state for the reconnecting player
+//   const game = await Game.findOne({ gameCode });
+ 
+//   // Tell the opponent they came back
+//   socket.to(gameCode).emit('opponent_reconnected', {
+//     message: 'Your opponent has reconnected!'
+//   });
+ 
+//   // Send reconnecting player their current game state
+//   socket.emit('game_resumed', { game });
+ 
+//   console.log(`Player ${playerIdStr} reconnected to game ${gameCode}.`);
+//   return true;
+// };
+ 
+// Cancels grace period on intentional leave — prevents false forfeits.
+exports.cancelGracePeriod = (playerId) => {
+  const key = playerId.toString();
+  const pending = pendingDisconnects.get(key);
+  if (pending) {
+    clearTimeout(pending.timer);
+    pendingDisconnects.delete(key);
+    console.log(`Grace period cancelled — intentional leave by ${key}`);
+  }
+};
+ 
+// // Removes abandoned one-player games after disconnect.
+// exports.handleDisconnect = async (playerId) => {
+//   try {
+//     const game = await Game.findOne({
+//       $or: [
+//         { playerWhite: playerId, playerBlack: null },
+//         { playerBlack: playerId, playerWhite: null }
+//       ],
+//       status: { $in: ['open', 'created'] }
+//     });
+
+//     if (game) {
+//       await Game.deleteOne({ _id: game._id });
+//       console.log(`Game ${game.gameCode} deleted due to sole player disconnection`);
+//     }
+//   } catch (err) {
+//     console.error('Error handling disconnection:', err);
+//   }
+// };
 
 // Joins an existing private game code.
 exports.joinGame = async (req, res) => {
