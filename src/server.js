@@ -17,8 +17,8 @@ const port = process.env.PORT || 5000;
 const clientUrl = process.env.CLIENTURL || 'http://localhost:3000';
 
 const io = socketIO(server, {
-  pingTimeout: 10000,
-  pingInterval: 12000,
+  pingTimeout: 20000,
+  pingInterval: 25000,
   transports: ['websocket', 'polling'],
 
   cors: {
