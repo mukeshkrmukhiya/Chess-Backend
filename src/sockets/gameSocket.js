@@ -2,48 +2,66 @@ const {
   handleDisconnect,
   handleActiveGameDisconnect,
   handleReconnect,
-  cancelGracePeriod
+  cancelGracePeriod,
+  buildRoomFromDb
 } = require('../controllers/gameController');
 const Game = require('../models/Game');
 
 // In-memory room state: { [gameCode]: { players: [], currentTurn: 'white' } }
 const games = {};
 
+// playerId -> socket.id of the ONE socket that currently owns that player.
+// Socket.IO issues a new socket.id on every reconnect, so a player can briefly
+// hold two live sockets server-side: the dead one still awaiting ping timeout
+// and the fresh one. Without this map the dead socket's late 'disconnect' is
+// indistinguishable from a real one and forfeits a game already back in play.
+const playerSockets = {};
+
 // Registers all Socket.IO events for online game rooms.
 const registerGameSocket = (io) => {
   io.on('connection', async (socket) => {
     console.log('A user connected:', socket.id);
 
-    // Read playerId from handshake auth (sent by client on connect).
-    // This allows reconnect detection before any 'joinRoom' event fires.
-    // const connectingPlayerId = socket.handshake.auth?.playerId;
-    // if (connectingPlayerId) {
-    //   socket.playerId = connectingPlayerId;
-    //   await handleReconnect(connectingPlayerId, socket, io);
-    // }
-
-    // ─── joinRoom ──────────────────────────────────────────────────────────
-    // socket.on('joinRoom', async ({ gameCode, playerId, username }) => {
-    //   socket.join(gameCode);
-    //   socket.playerId = playerId;                          // required for disconnect handler
-    //   socket.player  = { id: playerId, username, gameCode };
-
     socket.on('joinRoom', async ({ gameCode, playerId, username }) => {
-  socket.join(gameCode);
-  socket.playerId = playerId;
-  socket.player = { id: playerId, username, gameCode };
+      socket.join(gameCode);
+      socket.playerId = playerId;
+      socket.player = { id: playerId, username, gameCode };
 
-  // Check for valid reconnect
-  const resumed = await handleReconnect(
-    playerId,
-    gameCode,
-    socket,
-    io
-  );
+      // Claim this player. Any earlier socket is now stale: flag it so its
+      // disconnect handler no-ops, then close it instead of waiting on ping
+      // timeout.
+      const staleSocketId = playerSockets[playerId];
+      playerSockets[playerId] = socket.id;
 
-  if (resumed) {
-    return;
-  }
+      if (staleSocketId && staleSocketId !== socket.id) {
+        const staleSocket = io.sockets.sockets.get(staleSocketId);
+        if (staleSocket) {
+          staleSocket.intentionalLeave = true;
+          staleSocket.disconnect(true);
+        }
+      }
+
+      // Cancels any pending grace period and notifies the opponent.
+      const resumed = await handleReconnect(playerId, gameCode, socket, io);
+
+      // Recover room state from Mongo when it is missing but the DB still holds
+      // a live game. Without this, makeMove silently no-ops and the colour
+      // assignment below would hand this player 'white' regardless of their
+      // actual side.
+      if (!games[gameCode]) {
+        const rebuilt = await buildRoomFromDb(gameCode);
+        if (rebuilt) games[gameCode] = rebuilt;
+      }
+
+      if (resumed) {
+        if (games[gameCode]) {
+          io.to(gameCode).emit('gameState', {
+            players:     games[gameCode].players,
+            currentTurn: games[gameCode].currentTurn
+          });
+        }
+        return;
+      }
 
       if (!games[gameCode]) {
         // First player — create in-memory room
@@ -80,6 +98,12 @@ const registerGameSocket = (io) => {
     socket.on('leaveGame', ({ gameCode, playerId }) => {
       // Mark as intentional so disconnect handler skips grace period
       socket.intentionalLeave = true;
+
+      // Release ownership so a later rejoin is not mistaken for a stale socket
+      if (playerSockets[playerId] === socket.id) {
+        delete playerSockets[playerId];
+      }
+
       cancelGracePeriod(playerId);
 
       if (games[gameCode]) {
@@ -105,7 +129,13 @@ const registerGameSocket = (io) => {
     // ─── makeMove ──────────────────────────────────────────────────────────
     socket.on('makeMove', ({ gameCode, move, playerId }) => {
       const game = games[gameCode];
-      if (!game) return;
+
+      // Surface this instead of returning silently — a missing room used to
+      // freeze the board with no indication anything had gone wrong.
+      if (!game) {
+        socket.emit('invalidMove', { message: 'Game session not found. Please rejoin.' });
+        return;
+      }
 
       const player = game.players.find((entry) => entry.id === playerId);
       if (!player || player.color !== game.currentTurn) {
@@ -151,16 +181,27 @@ const registerGameSocket = (io) => {
       // Skip if player never authenticated or left intentionally
       if (!socket.playerId || socket.intentionalLeave) return;
 
-      // 1. Delete waiting (one-player) room from DB if present
-      await handleDisconnect(socket.playerId);
+      // Stale socket: this player already reconnected on a newer one. Starting a
+      // grace period here would forfeit a game that is actively being played.
+      if (playerSockets[socket.playerId] !== socket.id) return;
 
-      // 2. Start grace period for active 2-player game using in-memory state
+      delete playerSockets[socket.playerId];
+
       const gameCode = socket.player?.gameCode;
-      if (gameCode && games[gameCode]) {
+      const room = gameCode ? games[gameCode] : null;
+
+      // Only reap waiting rooms from the DB. A full game goes to the grace
+      // period instead, so it must not be deleted here.
+      if (!room || room.players.length < 2) {
+        await handleDisconnect(socket.playerId);
+      }
+
+      // Start grace period for active 2-player game using in-memory state
+      if (room) {
         await handleActiveGameDisconnect(
           socket.playerId,
           gameCode,
-          games[gameCode],   // pass in-memory object — avoids stale DB status issue
+          room,   // pass in-memory object — avoids stale DB status issue
           socket,
           io
         );

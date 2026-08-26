@@ -240,16 +240,18 @@ exports.handleReconnect = async (playerId, gameCode, socket, io) => {
     return false;
   }
 
-  clearTimeout(pending.timer);
-  pendingDisconnects.delete(playerIdStr);
-
-  socket.join(gameCode);
-
+  // Validate BEFORE cancelling. Clearing the timer and then bailing out leaves
+  // the game in limbo: no forfeit will ever fire and no resume was announced.
   const game = await Game.findOne({ gameCode });
 
   if (!game || game.status !== 'active') {
     return false;
   }
+
+  clearTimeout(pending.timer);
+  pendingDisconnects.delete(playerIdStr);
+
+  socket.join(gameCode);
 
   socket.to(gameCode).emit('opponent_reconnected', {
     message: 'Your opponent has reconnected!'
@@ -260,6 +262,32 @@ exports.handleReconnect = async (playerId, gameCode, socket, io) => {
   console.log(`Player ${playerIdStr} reconnected to game ${gameCode}.`);
 
   return true;
+};
+
+// Rebuilds in-memory room state from Mongo when the socket layer has lost it
+// (server restart, or the room was reaped while a player was still in the game).
+// Colors are authoritative — they come from playerWhite/playerBlack. currentTurn
+// is NOT persisted, so it falls back to 'white'.
+exports.buildRoomFromDb = async (gameCode) => {
+  try {
+    const game = await Game.findOne({ gameCode, status: 'active' })
+      .populate('playerWhite', 'username')
+      .populate('playerBlack', 'username')
+      .lean();
+
+    if (!game || !game.playerWhite || !game.playerBlack) return null;
+
+    return {
+      players: [
+        { id: String(game.playerWhite._id), username: game.playerWhite.username, color: 'white' },
+        { id: String(game.playerBlack._id), username: game.playerBlack.username, color: 'black' }
+      ],
+      currentTurn: 'white'
+    };
+  } catch (err) {
+    console.error('Failed to rebuild room from DB:', err);
+    return null;
+  }
 };
 
 

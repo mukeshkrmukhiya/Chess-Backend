@@ -17,8 +17,13 @@ const port = process.env.PORT || 5000;
 const clientUrl = process.env.CLIENTURL || 'http://localhost:3000';
 
 const io = socketIO(server, {
-  pingTimeout: 20000,
-  pingInterval: 25000,
+  // Worst-case drop detection is pingInterval + pingTimeout. The defaults
+  // (25s + 20s = 45s) exceed the 30s disconnect grace period, so a dropped
+  // player was forfeited before the server even noticed they had gone. Keep the
+  // total (~18s) comfortably inside that window, while staying tolerant of
+  // ordinary mobile latency spikes.
+  pingInterval: 10000,
+  pingTimeout: 8000,
   transports: ['websocket', 'polling'],
 
   cors: {
